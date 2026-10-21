@@ -88,6 +88,8 @@ public class ClientHandler implements Runnable {
       activeUsers.put(loggedInUser, out); // Add to the global online directory
       out.println("SUCCESS||Welcome " + username + "!");
       broadcastMessage("SERVER: " + username + " has joined the chat.");
+
+      broadcastUserList(); // Update everyone with the new user list
       return true;
     } else {
       out.println("ERROR||Authentication failed.");
@@ -100,6 +102,11 @@ public class ClientHandler implements Runnable {
     for (PrintWriter writer : activeUsers.values()) {
       writer.println(message);
     }
+  }
+
+  private void broadcastUserList() {
+    String usersString = String.join(",", activeUsers.keySet());
+    broadcastMessage("UPDATE_USERS||" + usersString);
   }
 
   private void logMessageToDB(String sender, String content) {
@@ -119,6 +126,7 @@ public class ClientHandler implements Runnable {
     if (loggedInUser != null) {
       activeUsers.remove(loggedInUser); // Remove from directory when they disconnect
       broadcastMessage("SERVER: " + loggedInUser + " has left the chat.");
+      broadcastUserList(); // Update everyone with the new user list
     }
     try {
       if (in != null)
