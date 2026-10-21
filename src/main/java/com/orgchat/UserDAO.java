@@ -19,9 +19,9 @@ public class UserDAO {
     // Generate a salt and hash the plain text password
     String hashedPassword = BCrypt.hashpw(password, BCrypt.gensalt());
 
-    // The try-with-resources block ensures the PreparedStatement closes
-    // automatically
-    try (Connection conn = DatabaseManager.getConnection();
+    Connection conn = DatabaseManager.getConnection();
+
+    try (
         PreparedStatement pstmt = conn.prepareStatement(insertSQL)) {
 
       pstmt.setString(1, username);
@@ -44,7 +44,9 @@ public class UserDAO {
   public static boolean authenticateUser(String username, String password) {
     String selectSQL = "SELECT password_hash FROM Users WHERE username = ?";
 
-    try (Connection conn = DatabaseManager.getConnection();
+    Connection conn = DatabaseManager.getConnection();
+
+    try (
         PreparedStatement pstmt = conn.prepareStatement(selectSQL)) {
 
       pstmt.setString(1, username);

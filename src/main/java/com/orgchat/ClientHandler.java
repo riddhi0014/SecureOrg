@@ -104,7 +104,8 @@ public class ClientHandler implements Runnable {
 
   private void logMessageToDB(String sender, String content) {
     String sql = "INSERT INTO Messages (sender_name, message_content) VALUES (?, ?)";
-    try (Connection conn = DatabaseManager.getConnection();
+    Connection conn = DatabaseManager.getConnection();
+    try (
         PreparedStatement pstmt = conn.prepareStatement(sql)) {
       pstmt.setString(1, sender);
       pstmt.setString(2, content);
