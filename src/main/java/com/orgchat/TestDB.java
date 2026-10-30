@@ -13,6 +13,10 @@ public class TestDB {
 
     // 2. Query the database
     try (Connection conn = DatabaseManager.getConnection()) {
+      if (conn == null) {
+        System.err.println("Could not connect to database.");
+        return;
+      }
       System.out.println("\n--- USERS IN DATABASE ---");
       try (PreparedStatement pstmt = conn.prepareStatement("SELECT * FROM Users");
           ResultSet rs = pstmt.executeQuery()) {

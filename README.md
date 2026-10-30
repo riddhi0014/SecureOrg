@@ -22,10 +22,10 @@ A robust, multithreaded client-server chat application built in Java. This proje
 
 ## 📂 Project Structure
 
-- `ChatServer.java`: The multithreaded server daemon that listens on port 5000 and dispatches `ClientHandler` threads.
+- `ChatServer.java`: The multithreaded server daemon that listens on port 5050 and dispatches `ClientHandler` threads.
 - `ClientHandler.java`: Manages the state machine for individual user sockets and routes messages based on `room_id`.
 - `ChatClient.java`: The entry point for the standalone desktop app, handling network connections and dynamic IP resolution.
-- `ChatFrame.java` / `AuthFrame.java`: Modern, dark-themed UI components for room selection and messaging.
+- `ChatFrame.java` / `LoginFrame.java`: Modern, dark-themed UI components for room selection, authentication, and messaging.
 - `DatabaseManager.java`: Initializes the relational schema and manages JDBC connections.
 - `UserDAO.java` / `RoomDAO.java`: Data Access Objects abstracting SQL queries and BCrypt verification.
 - `AdminDashboard.java`: The administrative portal for viewing SQL `JOIN` generated audit logs.
@@ -65,7 +65,7 @@ java -cp target/classes:path/to/sqlite.jar com.orgchat.AdminDashboard
 
 To distribute the client to other users on your network without exposing backend logic:
 
-1. Package `ChatClient`, `ChatFrame`, and `AuthFrame` into an executable JAR.
+1. Package `ChatClient`, `ChatFrame`, and `LoginFrame` into an executable JAR.
 2. Exclude all DAO, Database, and Server classes.
 3. Exclude SQLite and jBCrypt dependencies (the client only needs native Java libraries).
 4. Distribute the resulting `SecureOrg-client.jar`.

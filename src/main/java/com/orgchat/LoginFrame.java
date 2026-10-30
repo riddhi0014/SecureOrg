@@ -6,6 +6,8 @@ import java.awt.*;
 public class LoginFrame extends JFrame {
   private JTextField usernameField;
   private JPasswordField passwordField;
+  private JButton loginBtn;
+  private JButton registerBtn;
   private ChatClient client;
 
   public LoginFrame(ChatClient client) {
@@ -13,10 +15,21 @@ public class LoginFrame extends JFrame {
 
     // 1. Setup the basic window frame
     setTitle("Secure Org Chat - Login");
-    setSize(320, 200);
+    setSize(340, 220);
     setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
     setLocationRelativeTo(null); // Centers the window on the screen
     setLayout(new GridLayout(4, 1, 5, 5));
+
+    addWindowListener(new java.awt.event.WindowAdapter() {
+      @Override
+      public void windowClosing(java.awt.event.WindowEvent e) {
+        if (client != null) {
+          client.close();
+        }
+        dispose();
+        System.exit(0);
+      }
+    });
 
     // 2. Build the Username row
     JPanel userPanel = new JPanel(new FlowLayout());
@@ -32,8 +45,8 @@ public class LoginFrame extends JFrame {
 
     // 4. Build the Buttons row
     JPanel buttonPanel = new JPanel(new FlowLayout());
-    JButton loginBtn = new JButton("Login");
-    JButton registerBtn = new JButton("Register");
+    loginBtn = new JButton("Login");
+    registerBtn = new JButton("Register");
     buttonPanel.add(loginBtn);
     buttonPanel.add(registerBtn);
 
@@ -49,7 +62,7 @@ public class LoginFrame extends JFrame {
   }
 
   private void attemptAuth(String action) {
-    String username = usernameField.getText();
+    String username = usernameField.getText().trim();
     String password = new String(passwordField.getPassword());
 
     if (username.isEmpty() || password.isEmpty()) {
@@ -57,15 +70,42 @@ public class LoginFrame extends JFrame {
       return;
     }
 
-    // Call our ChatClient method to send the network request
-    if (client.connectAndAuthenticate(action, username, password)) {
-      dispose(); // Destroys the login window
-
-      // We will uncomment this line when ChatFrame is built!
-      new ChatFrame(client, username).setVisible(true);
-      System.out.println("Login successful! Ready to open ChatFrame.");
-    } else {
-      JOptionPane.showMessageDialog(this, "Authentication failed or Server is offline.");
+    if (username.contains(",") || username.contains("||")) {
+      JOptionPane.showMessageDialog(this, "Username cannot contain commas or '||'.");
+      return;
     }
+
+    setButtonsEnabled(false);
+
+    SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
+      @Override
+      protected Boolean doInBackground() {
+        return client.connectAndAuthenticate(action, username, password);
+      }
+
+      @Override
+      protected void done() {
+        try {
+          boolean success = get();
+          if (success) {
+            dispose();
+            new ChatFrame(client, username).setVisible(true);
+            System.out.println("Login successful! Opened ChatFrame for " + username);
+          } else {
+            JOptionPane.showMessageDialog(LoginFrame.this, client.getLastAuthError());
+            setButtonsEnabled(true);
+          }
+        } catch (Exception e) {
+          JOptionPane.showMessageDialog(LoginFrame.this, "Authentication error: " + e.getMessage());
+          setButtonsEnabled(true);
+        }
+      }
+    };
+    worker.execute();
+  }
+
+  private void setButtonsEnabled(boolean enabled) {
+    loginBtn.setEnabled(enabled);
+    registerBtn.setEnabled(enabled);
   }
 }

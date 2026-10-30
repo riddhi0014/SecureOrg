@@ -13,6 +13,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ClientHandler implements Runnable {
   // ENTERPRISE ROUTING: Maps RoomID -> (Username -> Socket Output Stream)
   private static final ConcurrentHashMap<Integer, ConcurrentHashMap<String, PrintWriter>> roomSessions = new ConcurrentHashMap<>();
+  // Tracks all actively logged-in users across the entire server to prevent duplicate logins
+  private static final ConcurrentHashMap<String, ClientHandler> activeUsers = new ConcurrentHashMap<>();
 
   private Socket socket;
   private PrintWriter out;
@@ -43,17 +45,20 @@ public class ClientHandler implements Runnable {
           handleCreateRoom(incomingMessage);
         } else if (incomingMessage.startsWith("JOIN_ROOM||")) {
           handleJoinRoom(incomingMessage);
+        } else if (incomingMessage.equals("LEAVE_ROOM")) {
+          leaveCurrentRoom();
+          out.println("SERVER: You have left the room.");
         } else if (currentRoomId != -1) {
           // Standard chat message routing
           logMessageToDB(loggedInUser, incomingMessage, currentRoomId);
           RoomDAO.updateLastActive(currentRoomId);
-          broadcastToRoom(loggedInUser + ": " + incomingMessage, currentRoomId);
+          broadcastToRoom("CHAT||" + loggedInUser + "||" + incomingMessage, currentRoomId);
         } else {
           out.println("SERVER: You must create or join a room first.");
         }
       }
     } catch (IOException e) {
-      System.out.println("Connection lost with client.");
+      System.out.println("Connection closed for client: " + (loggedInUser != null ? loggedInUser : "unauthenticated"));
     } finally {
       cleanUp();
     }
@@ -61,8 +66,9 @@ public class ClientHandler implements Runnable {
 
   private boolean authenticateClient() throws IOException {
     String authData = in.readLine();
-    if (authData == null)
+    if (authData == null) {
       return false;
+    }
 
     String[] parts = authData.split("\\|\\|");
     if (parts.length != 3) {
@@ -70,9 +76,14 @@ public class ClientHandler implements Runnable {
       return false;
     }
 
-    String action = parts[0];
-    String username = parts[1];
+    String action = parts[0].trim();
+    String username = parts[1].trim();
     String password = parts[2];
+
+    if (username.isEmpty() || password.isEmpty() || username.contains(",") || username.contains("||")) {
+      out.println("ERROR||Username cannot be empty, or contain commas or '||'.");
+      return false;
+    }
 
     boolean success = false;
     if (action.equals("LOGIN")) {
@@ -85,11 +96,17 @@ public class ClientHandler implements Runnable {
     }
 
     if (success) {
+      ClientHandler existing = activeUsers.putIfAbsent(username, this);
+      if (existing != null) {
+        out.println("ERROR||User '" + username + "' is already logged in from another session.");
+        return false;
+      }
+
       loggedInUser = username;
-      out.println("SUCCESS||Welcome " + username + "! Please join or create a room.");
+      out.println("AUTH_SUCCESS||Welcome " + username + "! Please join or create a room.");
       return true;
     } else {
-      out.println("ERROR||Authentication failed.");
+      out.println("ERROR||Authentication failed. Invalid credentials or username taken.");
       return false;
     }
   }
@@ -97,32 +114,42 @@ public class ClientHandler implements Runnable {
   private void handleCreateRoom(String command) {
     String[] parts = command.split("\\|\\|");
     if (parts.length == 3) {
-      String roomName = parts[1];
-      String secretCode = parts[2];
+      String roomName = parts[1].trim();
+      String secretCode = parts[2].trim();
+
+      if (roomName.isEmpty() || secretCode.isEmpty()) {
+        out.println("SERVER: Room name and secret code cannot be empty.");
+        return;
+      }
 
       if (RoomDAO.createRoom(roomName, secretCode)) {
         out.println("SERVER: Room '" + roomName + "' created successfully. You can now join it.");
       } else {
-        out.println("SERVER: Failed to create room. Name might be taken.");
+        out.println("SERVER: Failed to create room. Name might already be taken.");
       }
+    } else {
+      out.println("SERVER: Invalid CREATE_ROOM format.");
     }
   }
 
   private void handleJoinRoom(String command) {
     String[] parts = command.split("\\|\\|");
     if (parts.length == 3) {
-      String roomName = parts[1];
-      String secretCode = parts[2];
+      String roomName = parts[1].trim();
+      String secretCode = parts[2].trim();
+
+      if (roomName.isEmpty() || secretCode.isEmpty()) {
+        out.println("SERVER: Room name and secret code cannot be empty.");
+        return;
+      }
 
       int roomId = RoomDAO.authenticateRoom(roomName, secretCode);
       if (roomId != -1) {
-        // If they were in a previous room, remove them from that room's broadcast list
         leaveCurrentRoom();
 
         currentRoomId = roomId;
         RoomDAO.logUserJoin(roomId, loggedInUser);
 
-        // Ensure the inner map exists for this room
         roomSessions.putIfAbsent(roomId, new ConcurrentHashMap<>());
         roomSessions.get(roomId).put(loggedInUser, out);
 
@@ -132,6 +159,8 @@ public class ClientHandler implements Runnable {
       } else {
         out.println("SERVER: Invalid room name or secret code.");
       }
+    } else {
+      out.println("SERVER: Invalid JOIN_ROOM format.");
     }
   }
 
@@ -154,15 +183,19 @@ public class ClientHandler implements Runnable {
 
   private void logMessageToDB(String sender, String content, int roomId) {
     String sql = "INSERT INTO Messages (room_id, sender_name, message_content) VALUES (?, ?, ?)";
-    Connection conn = DatabaseManager.getConnection();
-
-    try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-      pstmt.setInt(1, roomId);
-      pstmt.setString(2, sender);
-      pstmt.setString(3, content);
-      pstmt.executeUpdate();
+    try (Connection conn = DatabaseManager.getConnection()) {
+      if (conn == null) {
+        System.err.println("Cannot log message: Database connection unavailable.");
+        return;
+      }
+      try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        pstmt.setInt(1, roomId);
+        pstmt.setString(2, sender);
+        pstmt.setString(3, content);
+        pstmt.executeUpdate();
+      }
     } catch (SQLException e) {
-      System.err.println("Failed to log message to database.");
+      System.err.println("Failed to log message to database: " + e.getMessage());
     }
   }
 
@@ -173,19 +206,24 @@ public class ClientHandler implements Runnable {
         roomUsers.remove(loggedInUser);
         broadcastToRoom("SERVER: " + loggedInUser + " has left the room.", currentRoomId);
         broadcastUserList(currentRoomId);
+
+        if (roomUsers.isEmpty()) {
+          roomSessions.remove(currentRoomId);
+        }
       }
+      currentRoomId = -1;
     }
   }
 
   private void cleanUp() {
     leaveCurrentRoom();
+    if (loggedInUser != null) {
+      activeUsers.remove(loggedInUser, this);
+    }
     try {
-      if (in != null)
-        in.close();
-      if (out != null)
-        out.close();
-      if (socket != null)
-        socket.close();
+      if (in != null) in.close();
+      if (out != null) out.close();
+      if (socket != null && !socket.isClosed()) socket.close();
     } catch (IOException e) {
       e.printStackTrace();
     }

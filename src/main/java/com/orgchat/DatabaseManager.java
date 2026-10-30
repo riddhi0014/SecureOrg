@@ -7,31 +7,36 @@ import java.sql.Statement;
 
 public class DatabaseManager {
   private static final String URL = "jdbc:sqlite:chat_history.db";
-  private static Connection connection = null;
+  private static volatile boolean isInitialized = false;
 
-  public static Connection getConnection() {
-    try {
-      if (connection == null || connection.isClosed()) {
-        connection = DriverManager.getConnection(URL);
-        System.out.println("SQLite database connected successfully.");
-
-        // CRITICAL SECURITY ENFORCEMENT:
-        // SQLite ignores foreign key constraints by default. We must force it ON.
-        try (Statement stmt = connection.createStatement()) {
-          stmt.execute("PRAGMA foreign_keys = ON;");
-        }
-
-        initializeDB();
-      }
-    } catch (SQLException e) {
-      System.err.println("Database connection failed.");
-      e.printStackTrace();
-    }
-    return connection;
+  private DatabaseManager() {
   }
 
-  private static void initializeDB() {
-    try (Statement stmt = connection.createStatement()) {
+  public static Connection getConnection() {
+    if (!isInitialized) {
+      initializeDB();
+    }
+    try {
+      Connection conn = DriverManager.getConnection(URL);
+      try (Statement stmt = conn.createStatement()) {
+        stmt.execute("PRAGMA foreign_keys = ON;");
+        stmt.execute("PRAGMA busy_timeout = 5000;");
+      }
+      return conn;
+    } catch (SQLException e) {
+      System.err.println("Database connection failed: " + e.getMessage());
+      return null;
+    }
+  }
+
+  public static synchronized void initializeDB() {
+    if (isInitialized) {
+      return;
+    }
+    try (Connection conn = DriverManager.getConnection(URL);
+        Statement stmt = conn.createStatement()) {
+      stmt.execute("PRAGMA foreign_keys = ON;");
+      stmt.execute("PRAGMA busy_timeout = 5000;");
 
       // Create Users Table
       String createUsers = "CREATE TABLE IF NOT EXISTS Users ("
@@ -49,7 +54,7 @@ public class DatabaseManager {
           + "last_active DATETIME DEFAULT CURRENT_TIMESTAMP)";
       stmt.execute(createRooms);
 
-      // Create Room_Members Table (The Audit Trail)
+      // Create Room_Members Table (Audit Trail)
       String createRoomMembers = "CREATE TABLE IF NOT EXISTS Room_Members ("
           + "room_id INTEGER NOT NULL, "
           + "user_id INTEGER NOT NULL, "
@@ -59,7 +64,7 @@ public class DatabaseManager {
           + "FOREIGN KEY (user_id) REFERENCES Users(id) ON DELETE CASCADE)";
       stmt.execute(createRoomMembers);
 
-      // Create Messages Table (Now isolated by room)
+      // Create Messages Table
       String createMessages = "CREATE TABLE IF NOT EXISTS Messages ("
           + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
           + "room_id INTEGER NOT NULL, "
@@ -69,6 +74,7 @@ public class DatabaseManager {
           + "FOREIGN KEY (room_id) REFERENCES Rooms(id) ON DELETE CASCADE)";
       stmt.execute(createMessages);
 
+      isInitialized = true;
       System.out.println("Relational database schema initialized successfully.");
     } catch (SQLException e) {
       System.err.println("Failed to initialize database tables.");

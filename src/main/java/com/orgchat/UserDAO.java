@@ -13,24 +13,27 @@ public class UserDAO {
    * Returns true if successful, false if the username already exists.
    */
   public static boolean registerUser(String username, String password) {
-    // We use ? placeholders to prevent SQL Injection attacks
-    String insertSQL = "INSERT INTO Users (username, password_hash) VALUES (?, ?)";
+    if (username == null || password == null || username.trim().isEmpty() || password.trim().isEmpty()) {
+      return false;
+    }
 
-    // Generate a salt and hash the plain text password
+    String insertSQL = "INSERT INTO Users (username, password_hash) VALUES (?, ?)";
     String hashedPassword = BCrypt.hashpw(password, BCrypt.gensalt());
 
-    Connection conn = DatabaseManager.getConnection();
+    try (Connection conn = DatabaseManager.getConnection()) {
+      if (conn == null) {
+        System.err.println("Cannot register user: Database connection is unavailable.");
+        return false;
+      }
 
-    try (
-        PreparedStatement pstmt = conn.prepareStatement(insertSQL)) {
+      try (PreparedStatement pstmt = conn.prepareStatement(insertSQL)) {
+        pstmt.setString(1, username.trim());
+        pstmt.setString(2, hashedPassword);
+        pstmt.executeUpdate();
 
-      pstmt.setString(1, username);
-      pstmt.setString(2, hashedPassword);
-      pstmt.executeUpdate(); // Executes the INSERT
-
-      System.out.println("User registered successfully: " + username);
-      return true;
-
+        System.out.println("User registered successfully: " + username);
+        return true;
+      }
     } catch (SQLException e) {
       System.err.println("Registration failed. Username might already exist: " + username);
       return false;
@@ -42,34 +45,37 @@ public class UserDAO {
    * Returns true if the password matches, false otherwise.
    */
   public static boolean authenticateUser(String username, String password) {
+    if (username == null || password == null || username.trim().isEmpty() || password.trim().isEmpty()) {
+      return false;
+    }
+
     String selectSQL = "SELECT password_hash FROM Users WHERE username = ?";
 
-    Connection conn = DatabaseManager.getConnection();
-
-    try (
-        PreparedStatement pstmt = conn.prepareStatement(selectSQL)) {
-
-      pstmt.setString(1, username);
-      ResultSet rs = pstmt.executeQuery(); // Executes the SELECT
-
-      // rs.next() moves the cursor to the first row. It returns false if no user was
-      // found.
-      if (rs.next()) {
-        String storedHash = rs.getString("password_hash");
-
-        // BCrypt checks if the plain text password mathematically matches the hash
-        if (BCrypt.checkpw(password, storedHash)) {
-          System.out.println("Authentication successful for user: " + username);
-          return true;
-        } else {
-          System.out.println("Invalid password for user: " + username);
-          return false;
-        }
-      } else {
-        System.out.println("User not found: " + username);
+    try (Connection conn = DatabaseManager.getConnection()) {
+      if (conn == null) {
+        System.err.println("Cannot authenticate user: Database connection is unavailable.");
         return false;
       }
 
+      try (PreparedStatement pstmt = conn.prepareStatement(selectSQL)) {
+        pstmt.setString(1, username.trim());
+        try (ResultSet rs = pstmt.executeQuery()) {
+          if (rs.next()) {
+            String storedHash = rs.getString("password_hash");
+
+            if (BCrypt.checkpw(password, storedHash)) {
+              System.out.println("Authentication successful for user: " + username);
+              return true;
+            } else {
+              System.out.println("Invalid password for user: " + username);
+              return false;
+            }
+          } else {
+            System.out.println("User not found: " + username);
+            return false;
+          }
+        }
+      }
     } catch (SQLException e) {
       System.err.println("Database error during authentication.");
       e.printStackTrace();

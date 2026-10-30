@@ -1,48 +1,61 @@
 package com.orgchat;
 
-import javax.net.ssl.SSLServerSocket;
-import javax.net.ssl.SSLServerSocketFactory;
-import javax.net.ssl.SSLSocket;
 import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class ChatServer {
-  // Standard port for secure (SSL/HTTPS) traffic is usually in the 8443 or 443
-  // range
-  private static final int PORT = 8443;
-
-  // A Thread Pool that can handle up to 50 concurrent employees chatting at once
-  private static final ExecutorService pool = Executors.newFixedThreadPool(50);
+  public static final int DEFAULT_PORT = 5050;
+  private static final ExecutorService pool = Executors.newCachedThreadPool();
 
   public static void main(String[] args) {
-    // 1. Tell the Java Virtual Machine where to find our SSL certificate
-    System.setProperty("javax.net.ssl.keyStore", "keystore.p12");
-    System.setProperty("javax.net.ssl.keyStorePassword", "password123");
+    int port = DEFAULT_PORT;
+    if (args.length > 0) {
+      try {
+        port = Integer.parseInt(args[0]);
+      } catch (NumberFormatException e) {
+        System.err.println("Invalid port provided, using default " + DEFAULT_PORT);
+      }
+    }
 
-    System.out.println("Secure Chat Server is booting up...");
+    System.out.println("Secure Org Chat Server is booting up...");
 
+    // Initialize the relational database schema before accepting connections
+    DatabaseManager.initializeDB();
+
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      System.out.println("Shutting down thread pool...");
+      pool.shutdown();
+    }));
+
+    ServerSocket serverSocket = null;
     try {
-      // 2. Create the SSL Server Socket
-      SSLServerSocketFactory sslServerSocketFactory = (SSLServerSocketFactory) SSLServerSocketFactory.getDefault();
-      SSLServerSocket serverSocket = (SSLServerSocket) sslServerSocketFactory.createServerSocket(PORT);
+      serverSocket = new ServerSocket(port);
+      System.out.println("Server is actively listening for connections on port " + port);
 
-      System.out.println("Server is actively listening for encrypted connections on port " + PORT);
+      while (!serverSocket.isClosed()) {
+        Socket clientSocket = serverSocket.accept();
+        System.out.println("New connection established with client: " + clientSocket.getRemoteSocketAddress());
 
-      // 3. The Infinite Loop
-      while (true) {
-        // .accept() pauses the loop here until a client actually connects
-        SSLSocket clientSocket = (SSLSocket) serverSocket.accept();
-        System.out.println("New secure connection established with a client!");
-
-        // 4. Hand the client off to a background worker thread
         ClientHandler clientThread = new ClientHandler(clientSocket);
         pool.execute(clientThread);
       }
-
     } catch (IOException e) {
-      System.err.println("Server encountered an error: " + e.getMessage());
-      e.printStackTrace();
+      if (serverSocket != null && !serverSocket.isClosed()) {
+        System.err.println("Server encountered an error: " + e.getMessage());
+        e.printStackTrace();
+      } else if (serverSocket == null) {
+        System.err.println("Could not bind to port " + port + ": " + e.getMessage());
+      }
+    } finally {
+      pool.shutdown();
+      try {
+        if (serverSocket != null && !serverSocket.isClosed()) {
+          serverSocket.close();
+        }
+      } catch (IOException ignored) {}
     }
   }
 }
