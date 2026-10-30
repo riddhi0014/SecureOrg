@@ -1,57 +1,60 @@
 package com.orgchat;
 
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
 import javax.swing.*;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.Socket;
 
 public class ChatClient {
-  // In a real environment, this would be your server's public IP address.
-  private static final String SERVER_ADDRESS = "localhost";
-  private static final int SERVER_PORT = 8443;
-
-  private SSLSocket socket;
+  private Socket socket;
   private BufferedReader in;
   private PrintWriter out;
 
   public static void main(String[] args) {
-    // Tell the client to trust our self-signed certificate
-    System.setProperty("javax.net.ssl.trustStore", "keystore.p12");
-    System.setProperty("javax.net.ssl.trustStorePassword", "password123");
+    // 1. Prompt the user for the IP address before doing anything else
+    String serverIP = JOptionPane.showInputDialog(
+        null,
+        "Enter the Server IP Address (leave as localhost for same machine):",
+        "CivicConnect - Network Setup",
+        JOptionPane.QUESTION_MESSAGE);
 
-    // Swing GUIs must be started on the Event Dispatch Thread to prevent freezing
-    SwingUtilities.invokeLater(() -> {
-      new LoginFrame(new ChatClient()).setVisible(true);
-    });
+    // 2. If the user clicks "Cancel" or closes the window, exit the program
+    // gracefully
+    if (serverIP == null) {
+      System.exit(0);
+    }
+
+    // 3. If they leave it blank, default to localhost
+    if (serverIP.trim().isEmpty()) {
+      serverIP = "localhost";
+    }
+
+    // 4. Launch the client with the provided IP
+    new ChatClient(serverIP, 5000);
   }
 
-  public boolean connectAndAuthenticate(String action, String username, String password) {
+  public ChatClient(String serverAddress, int port) {
     try {
-      // Establish the secure connection to the server
-      SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-      socket = (SSLSocket) factory.createSocket(SERVER_ADDRESS, SERVER_PORT);
-
+      // Use the dynamic IP address to establish the TCP connection
+      socket = new Socket(serverAddress, port);
       in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
       out = new PrintWriter(socket.getOutputStream(), true);
 
-      // Send the raw protocol string we defined in ClientHandler
-      out.println(action + "||" + username + "||" + password);
+      // Launch the Login UI
+      // NOTE: Change 'AuthFrame' to your actual login window class name if different
+      SwingUtilities.invokeLater(() -> new LoginFrame(this).setVisible(true));
 
-      // Wait for the server's response
-      String response = in.readLine();
-      if (response != null && response.startsWith("SUCCESS")) {
-        return true;
-      }
     } catch (IOException e) {
-      System.err.println("Could not connect to the server.");
+      JOptionPane.showMessageDialog(null,
+          "Could not connect to server at " + serverAddress + "\nMake sure the server is running.",
+          "Connection Error",
+          JOptionPane.ERROR_MESSAGE);
+      System.exit(0);
     }
-    return false;
   }
 
-  // Getters so the main ChatFrame can read and write messages later
   public BufferedReader getIn() {
     return in;
   }
