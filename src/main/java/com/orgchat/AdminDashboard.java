@@ -8,70 +8,122 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
 public class AdminDashboard extends JFrame {
-  private JTable logTable;
-  private DefaultTableModel tableModel;
+  private JTable roomsTable, auditTable, messagesTable;
+  private DefaultTableModel roomsModel, auditModel, messagesModel;
 
   public AdminDashboard() {
     setTitle("CivicConnect Secure Network - Admin Audit Portal");
-    setSize(700, 500);
+    setSize(900, 600);
     setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
     setLocationRelativeTo(null);
     setLayout(new BorderLayout());
 
-    // 1. Set up the Table Columns
-    String[] columns = { "Message ID", "Sender", "Message Content" };
-    tableModel = new DefaultTableModel(columns, 0);
-    logTable = new JTable(tableModel);
+    JTabbedPane tabbedPane = new JTabbedPane();
+    tabbedPane.setFont(new Font("SansSerif", Font.BOLD, 14));
 
-    // 2. Style the Table for a professional look
-    logTable.setFont(new Font("SansSerif", Font.PLAIN, 14));
-    logTable.setRowHeight(25);
-    logTable.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 14));
-    logTable.getTableHeader().setBackground(new Color(43, 45, 49));
-    logTable.getTableHeader().setForeground(Color.WHITE);
+    // 1. Rooms Tab
+    roomsModel = new DefaultTableModel(new String[] { "Room ID", "Room Name", "Created At", "Last Active" }, 0);
+    roomsTable = styleTable(roomsModel);
+    tabbedPane.addTab("Active Rooms", new JScrollPane(roomsTable));
 
-    JScrollPane scrollPane = new JScrollPane(logTable);
-    add(scrollPane, BorderLayout.CENTER);
+    // 2. Audit Trail Tab (Room_Members JOIN Users JOIN Rooms)
+    auditModel = new DefaultTableModel(new String[] { "Room Name", "Username", "Joined At" }, 0);
+    auditTable = styleTable(auditModel);
+    tabbedPane.addTab("Membership Audit Trail", new JScrollPane(auditTable));
 
-    // 3. Add a Refresh Button at the bottom
+    // 3. Global Messages Tab (Messages JOIN Rooms)
+    messagesModel = new DefaultTableModel(new String[] { "Room Name", "Sender", "Message Content", "Sent At" }, 0);
+    messagesTable = styleTable(messagesModel);
+    tabbedPane.addTab("Global Chat Logs", new JScrollPane(messagesTable));
+
+    add(tabbedPane, BorderLayout.CENTER);
+
+    // Refresh Button
     JPanel bottomPanel = new JPanel();
-    JButton refreshBtn = new JButton("Refresh Logs");
-    refreshBtn.addActionListener(e -> fetchLogsFromDatabase());
+    bottomPanel.setBackground(new Color(43, 45, 49));
+    JButton refreshBtn = new JButton("Refresh All Logs");
+    refreshBtn.setFont(new Font("SansSerif", Font.BOLD, 14));
+    refreshBtn.addActionListener(e -> fetchAllData());
     bottomPanel.add(refreshBtn);
     add(bottomPanel, BorderLayout.SOUTH);
 
-    // 4. Initial data load
-    fetchLogsFromDatabase();
+    fetchAllData();
   }
 
-  private void fetchLogsFromDatabase() {
-    // Clear existing rows before fetching fresh data
-    tableModel.setRowCount(0);
+  private JTable styleTable(DefaultTableModel model) {
+    JTable table = new JTable(model);
+    table.setFont(new Font("SansSerif", Font.PLAIN, 14));
+    table.setRowHeight(25);
+    table.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 14));
+    table.getTableHeader().setBackground(new Color(43, 45, 49));
+    table.getTableHeader().setForeground(Color.WHITE);
+    return table;
+  }
 
-    String sql = "SELECT id, sender_name, message_content FROM Messages ORDER BY id ASC";
+  private void fetchAllData() {
+    fetchRooms();
+    fetchAuditTrail();
+    fetchMessages();
+  }
 
+  private void fetchRooms() {
+    roomsModel.setRowCount(0);
+    String sql = "SELECT id, room_name, created_at, last_active FROM Rooms ORDER BY created_at DESC";
     try (Connection conn = DatabaseManager.getConnection();
         PreparedStatement pstmt = conn.prepareStatement(sql);
         ResultSet rs = pstmt.executeQuery()) {
-
       while (rs.next()) {
-        int id = rs.getInt("id");
-        String sender = rs.getString("sender_name");
-        String content = rs.getString("message_content");
-
-        // Add the row directly to the Swing UI table
-        tableModel.addRow(new Object[] { id, sender, content });
+        roomsModel.addRow(new Object[] {
+            rs.getInt("id"), rs.getString("room_name"),
+            rs.getString("created_at"), rs.getString("last_active")
+        });
       }
     } catch (Exception e) {
-      JOptionPane.showMessageDialog(this, "Failed to load database logs.");
+      e.printStackTrace();
+    }
+  }
+
+  private void fetchAuditTrail() {
+    auditModel.setRowCount(0);
+    String sql = "SELECT r.room_name, u.username, rm.joined_at " +
+        "FROM Room_Members rm " +
+        "JOIN Rooms r ON rm.room_id = r.id " +
+        "JOIN Users u ON rm.user_id = u.id " +
+        "ORDER BY rm.joined_at DESC";
+    try (Connection conn = DatabaseManager.getConnection();
+        PreparedStatement pstmt = conn.prepareStatement(sql);
+        ResultSet rs = pstmt.executeQuery()) {
+      while (rs.next()) {
+        auditModel.addRow(new Object[] {
+            rs.getString("room_name"), rs.getString("username"), rs.getString("joined_at")
+        });
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+
+  private void fetchMessages() {
+    messagesModel.setRowCount(0);
+    String sql = "SELECT r.room_name, m.sender_name, m.message_content, m.sent_at " +
+        "FROM Messages m " +
+        "JOIN Rooms r ON m.room_id = r.id " +
+        "ORDER BY m.sent_at DESC";
+    try (Connection conn = DatabaseManager.getConnection();
+        PreparedStatement pstmt = conn.prepareStatement(sql);
+        ResultSet rs = pstmt.executeQuery()) {
+      while (rs.next()) {
+        messagesModel.addRow(new Object[] {
+            rs.getString("room_name"), rs.getString("sender_name"),
+            rs.getString("message_content"), rs.getString("sent_at")
+        });
+      }
+    } catch (Exception e) {
       e.printStackTrace();
     }
   }
 
   public static void main(String[] args) {
-    // Launch the Admin Dashboard
-    SwingUtilities.invokeLater(() -> {
-      new AdminDashboard().setVisible(true);
-    });
+    SwingUtilities.invokeLater(() -> new AdminDashboard().setVisible(true));
   }
 }

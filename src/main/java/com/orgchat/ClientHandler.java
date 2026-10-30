@@ -11,14 +11,14 @@ import java.sql.SQLException;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientHandler implements Runnable {
-  // A thread-safe map shared across all instances to track online users and their
-  // output streams
-  private static final ConcurrentHashMap<String, PrintWriter> activeUsers = new ConcurrentHashMap<>();
+  // ENTERPRISE ROUTING: Maps RoomID -> (Username -> Socket Output Stream)
+  private static final ConcurrentHashMap<Integer, ConcurrentHashMap<String, PrintWriter>> roomSessions = new ConcurrentHashMap<>();
 
   private Socket socket;
   private PrintWriter out;
   private BufferedReader in;
   private String loggedInUser = null;
+  private int currentRoomId = -1; // -1 indicates the user is authenticated but hasn't joined a room yet
 
   public ClientHandler(Socket socket) {
     this.socket = socket;
@@ -27,28 +27,31 @@ public class ClientHandler implements Runnable {
   @Override
   public void run() {
     try {
-      // Setup input (reading from client) and output (sending to client) streams
       in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
       out = new PrintWriter(socket.getOutputStream(), true);
 
-      // Step 1: Force the client to authenticate before allowing them into the chat
+      // Step 1: User Identity Authentication
       if (!authenticateClient()) {
         socket.close();
         return;
       }
 
-      // Step 2: The infinite loop listening for incoming chat messages
+      // Step 2: The Command & Chat Routing Loop
       String incomingMessage;
       while ((incomingMessage = in.readLine()) != null) {
-        System.out.println("Received from " + loggedInUser + ": " + incomingMessage);
-
-        // Save to SQLite for auditing
-        logMessageToDB(loggedInUser, incomingMessage);
-
-        // Broadcast to everyone else
-        broadcastMessage(loggedInUser + ": " + incomingMessage);
+        if (incomingMessage.startsWith("CREATE_ROOM||")) {
+          handleCreateRoom(incomingMessage);
+        } else if (incomingMessage.startsWith("JOIN_ROOM||")) {
+          handleJoinRoom(incomingMessage);
+        } else if (currentRoomId != -1) {
+          // Standard chat message routing
+          logMessageToDB(loggedInUser, incomingMessage, currentRoomId);
+          RoomDAO.updateLastActive(currentRoomId);
+          broadcastToRoom(loggedInUser + ": " + incomingMessage, currentRoomId);
+        } else {
+          out.println("SERVER: You must create or join a room first.");
+        }
       }
-
     } catch (IOException e) {
       System.out.println("Connection lost with client.");
     } finally {
@@ -57,8 +60,6 @@ public class ClientHandler implements Runnable {
   }
 
   private boolean authenticateClient() throws IOException {
-    // We expect a strictly formatted string from the client:
-    // ACTION||username||password
     String authData = in.readLine();
     if (authData == null)
       return false;
@@ -79,17 +80,13 @@ public class ClientHandler implements Runnable {
     } else if (action.equals("REGISTER")) {
       success = UserDAO.registerUser(username, password);
       if (success) {
-        success = UserDAO.authenticateUser(username, password); // Auto-login after register
+        success = UserDAO.authenticateUser(username, password);
       }
     }
 
     if (success) {
       loggedInUser = username;
-      activeUsers.put(loggedInUser, out); // Add to the global online directory
-      out.println("SUCCESS||Welcome " + username + "!");
-      broadcastMessage("SERVER: " + username + " has joined the chat.");
-
-      broadcastUserList(); // Update everyone with the new user list
+      out.println("SUCCESS||Welcome " + username + "! Please join or create a room.");
       return true;
     } else {
       out.println("ERROR||Authentication failed.");
@@ -97,37 +94,91 @@ public class ClientHandler implements Runnable {
     }
   }
 
-  private void broadcastMessage(String message) {
-    // Loop through every connected user's output stream and send the message
-    for (PrintWriter writer : activeUsers.values()) {
-      writer.println(message);
+  private void handleCreateRoom(String command) {
+    String[] parts = command.split("\\|\\|");
+    if (parts.length == 3) {
+      String roomName = parts[1];
+      String secretCode = parts[2];
+
+      if (RoomDAO.createRoom(roomName, secretCode)) {
+        out.println("SERVER: Room '" + roomName + "' created successfully. You can now join it.");
+      } else {
+        out.println("SERVER: Failed to create room. Name might be taken.");
+      }
     }
   }
 
-  private void broadcastUserList() {
-    String usersString = String.join(",", activeUsers.keySet());
-    broadcastMessage("UPDATE_USERS||" + usersString);
+  private void handleJoinRoom(String command) {
+    String[] parts = command.split("\\|\\|");
+    if (parts.length == 3) {
+      String roomName = parts[1];
+      String secretCode = parts[2];
+
+      int roomId = RoomDAO.authenticateRoom(roomName, secretCode);
+      if (roomId != -1) {
+        // If they were in a previous room, remove them from that room's broadcast list
+        leaveCurrentRoom();
+
+        currentRoomId = roomId;
+        RoomDAO.logUserJoin(roomId, loggedInUser);
+
+        // Ensure the inner map exists for this room
+        roomSessions.putIfAbsent(roomId, new ConcurrentHashMap<>());
+        roomSessions.get(roomId).put(loggedInUser, out);
+
+        out.println("ROOM_JOINED||" + roomName);
+        broadcastToRoom("SERVER: " + loggedInUser + " has joined the room.", currentRoomId);
+        broadcastUserList(currentRoomId);
+      } else {
+        out.println("SERVER: Invalid room name or secret code.");
+      }
+    }
   }
 
-  private void logMessageToDB(String sender, String content) {
-    String sql = "INSERT INTO Messages (sender_name, message_content) VALUES (?, ?)";
+  private void broadcastToRoom(String message, int roomId) {
+    ConcurrentHashMap<String, PrintWriter> roomUsers = roomSessions.get(roomId);
+    if (roomUsers != null) {
+      for (PrintWriter writer : roomUsers.values()) {
+        writer.println(message);
+      }
+    }
+  }
+
+  private void broadcastUserList(int roomId) {
+    ConcurrentHashMap<String, PrintWriter> roomUsers = roomSessions.get(roomId);
+    if (roomUsers != null) {
+      String usersString = String.join(",", roomUsers.keySet());
+      broadcastToRoom("UPDATE_USERS||" + usersString, roomId);
+    }
+  }
+
+  private void logMessageToDB(String sender, String content, int roomId) {
+    String sql = "INSERT INTO Messages (room_id, sender_name, message_content) VALUES (?, ?, ?)";
     Connection conn = DatabaseManager.getConnection();
-    try (
-        PreparedStatement pstmt = conn.prepareStatement(sql)) {
-      pstmt.setString(1, sender);
-      pstmt.setString(2, content);
+
+    try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+      pstmt.setInt(1, roomId);
+      pstmt.setString(2, sender);
+      pstmt.setString(3, content);
       pstmt.executeUpdate();
     } catch (SQLException e) {
       System.err.println("Failed to log message to database.");
     }
   }
 
-  private void cleanUp() {
-    if (loggedInUser != null) {
-      activeUsers.remove(loggedInUser); // Remove from directory when they disconnect
-      broadcastMessage("SERVER: " + loggedInUser + " has left the chat.");
-      broadcastUserList(); // Update everyone with the new user list
+  private void leaveCurrentRoom() {
+    if (currentRoomId != -1) {
+      ConcurrentHashMap<String, PrintWriter> roomUsers = roomSessions.get(currentRoomId);
+      if (roomUsers != null) {
+        roomUsers.remove(loggedInUser);
+        broadcastToRoom("SERVER: " + loggedInUser + " has left the room.", currentRoomId);
+        broadcastUserList(currentRoomId);
+      }
     }
+  }
+
+  private void cleanUp() {
+    leaveCurrentRoom();
     try {
       if (in != null)
         in.close();
@@ -140,7 +191,6 @@ public class ClientHandler implements Runnable {
     }
   }
 }
-
 // 1. private static final ConcurrentHashMap<String, PrintWriter> activeUsers =
 // new ConcurrentHashMap<>();
 // What it does: Because it has the keyword static, this map does not belong to
