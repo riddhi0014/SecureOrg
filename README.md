@@ -1,4 +1,4 @@
-# SecureOrg Chat (CivicConnect Secure Network)
+# SecureOrg Chat
 
 A robust, multithreaded client-server chat application built in Java. This project demonstrates enterprise-grade network programming, relational database management, and cryptographic security by offering isolated, password-protected chat rooms and a real-time administrative audit dashboard.
 
@@ -15,14 +15,14 @@ A robust, multithreaded client-server chat application built in Java. This proje
 
 - **Language**: Java (JDK 11+)
 - **GUI Framework**: Java Swing
-- **Networking**: `java.net.Socket` / TCP/IP
+- **Networking**: `javax.net.ssl.SSLSocket` / TCP/IP with TLS Encryption
 - **Database**: SQLite via JDBC
-- **Security**: jBCrypt
+- **Security**: TLS 1.3 / PKCS12 Keystore & jBCrypt
 - **Version Control**: Git / GitHub
 
 ## 📂 Project Structure
 
-- `ChatServer.java`: The multithreaded server daemon that listens on port 5050 and dispatches `ClientHandler` threads.
+- `ChatServer.java`: The multithreaded TLS server daemon that listens on port 8443 and dispatches `ClientHandler` threads.
 - `ClientHandler.java`: Manages the state machine for individual user sockets and routes messages based on `room_id`.
 - `ChatClient.java`: The entry point for the standalone desktop app, handling network connections and dynamic IP resolution.
 - `ChatFrame.java` / `LoginFrame.java`: Modern, dark-themed UI components for room selection, authentication, and messaging.

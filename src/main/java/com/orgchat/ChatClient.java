@@ -1,14 +1,23 @@
 package com.orgchat;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
 import javax.swing.*;
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.Socket;
+import java.security.KeyStore;
+import java.security.SecureRandom;
 
 public class ChatClient {
-  private Socket socket;
+  public static final int DEFAULT_PORT = 8443;
+  private SSLSocket socket;
   private BufferedReader in;
   private PrintWriter out;
 
@@ -16,8 +25,8 @@ public class ChatClient {
     // 1. Prompt the user for the IP address before doing anything else
     String serverIP = JOptionPane.showInputDialog(
         null,
-        "Enter Server IP Address (e.g., localhost or 192.168.1.5, optionally with port e.g. localhost:5050):",
-        "CivicConnect - Network Setup",
+        "Enter Server IP Address (e.g., localhost or 192.168.1.5, optionally with port e.g. localhost:8443):",
+        "CivicConnect - Network Setup (TLS Encrypted)",
         JOptionPane.QUESTION_MESSAGE);
 
     // 2. If the user clicks "Cancel" or closes the window, exit the program gracefully
@@ -31,7 +40,7 @@ public class ChatClient {
     }
 
     String serverAddress = "localhost";
-    int port = 5050;
+    int port = DEFAULT_PORT;
     if (serverIP.contains(":")) {
       String[] parts = serverIP.split(":", 2);
       serverAddress = parts[0].trim();
@@ -48,20 +57,45 @@ public class ChatClient {
 
   public ChatClient(String serverAddress, int port) {
     try {
-      socket = new Socket(serverAddress, port);
+      socket = createSSLSocket(serverAddress, port);
       in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
       out = new PrintWriter(socket.getOutputStream(), true);
 
       // Launch the Login UI
       SwingUtilities.invokeLater(() -> new LoginFrame(this).setVisible(true));
 
-    } catch (IOException e) {
+    } catch (Exception e) {
       JOptionPane.showMessageDialog(null,
-          "Could not connect to server at " + serverAddress + ":" + port + "\nMake sure the server is running.",
-          "Connection Error",
+          "Could not establish secure TLS connection to server at " + serverAddress + ":" + port + "\nError: " + e.getMessage() + "\nMake sure the server is running with SSL.",
+          "Secure Connection Error",
           JOptionPane.ERROR_MESSAGE);
       System.exit(0);
     }
+  }
+
+  private SSLSocket createSSLSocket(String host, int port) throws Exception {
+    KeyStore trustStore = KeyStore.getInstance("PKCS12");
+    InputStream stream = ChatClient.class.getResourceAsStream("/keystore.p12");
+    if (stream == null && new File("keystore.p12").exists()) {
+      stream = new FileInputStream("keystore.p12");
+    }
+    if (stream == null) {
+      throw new IOException("keystore.p12 (TrustStore) not found on classpath or in working directory!");
+    }
+    try (InputStream is = stream) {
+      trustStore.load(is, "password123".toCharArray());
+    }
+
+    TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    tmf.init(trustStore);
+
+    SSLContext sslContext = SSLContext.getInstance("TLS");
+    sslContext.init(null, tmf.getTrustManagers(), new SecureRandom());
+
+    SSLSocketFactory factory = sslContext.getSocketFactory();
+    SSLSocket sslSocket = (SSLSocket) factory.createSocket(host, port);
+    sslSocket.startHandshake();
+    return sslSocket;
   }
 
   private String lastAuthError = "Authentication failed or Server is offline.";
