@@ -69,14 +69,16 @@ public class AdminDashboard extends JFrame {
   private void fetchRooms() {
     roomsModel.setRowCount(0);
     String sql = "SELECT id, room_name, created_at, last_active FROM Rooms ORDER BY created_at DESC";
-    try (Connection conn = DatabaseManager.getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql);
-        ResultSet rs = pstmt.executeQuery()) {
-      while (rs.next()) {
-        roomsModel.addRow(new Object[] {
-            rs.getInt("id"), rs.getString("room_name"),
-            rs.getString("created_at"), rs.getString("last_active")
-        });
+    try (Connection conn = DatabaseManager.getConnection()) {
+      if (conn == null) return;
+      try (PreparedStatement pstmt = conn.prepareStatement(sql);
+          ResultSet rs = pstmt.executeQuery()) {
+        while (rs.next()) {
+          roomsModel.addRow(new Object[] {
+              rs.getInt("id"), rs.getString("room_name"),
+              rs.getString("created_at"), rs.getString("last_active")
+          });
+        }
       }
     } catch (Exception e) {
       e.printStackTrace();
@@ -90,13 +92,15 @@ public class AdminDashboard extends JFrame {
         "JOIN Rooms r ON rm.room_id = r.id " +
         "JOIN Users u ON rm.user_id = u.id " +
         "ORDER BY rm.joined_at DESC";
-    try (Connection conn = DatabaseManager.getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql);
-        ResultSet rs = pstmt.executeQuery()) {
-      while (rs.next()) {
-        auditModel.addRow(new Object[] {
-            rs.getString("room_name"), rs.getString("username"), rs.getString("joined_at")
-        });
+    try (Connection conn = DatabaseManager.getConnection()) {
+      if (conn == null) return;
+      try (PreparedStatement pstmt = conn.prepareStatement(sql);
+          ResultSet rs = pstmt.executeQuery()) {
+        while (rs.next()) {
+          auditModel.addRow(new Object[] {
+              rs.getString("room_name"), rs.getString("username"), rs.getString("joined_at")
+          });
+        }
       }
     } catch (Exception e) {
       e.printStackTrace();
@@ -109,14 +113,16 @@ public class AdminDashboard extends JFrame {
         "FROM Messages m " +
         "JOIN Rooms r ON m.room_id = r.id " +
         "ORDER BY m.sent_at DESC";
-    try (Connection conn = DatabaseManager.getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql);
-        ResultSet rs = pstmt.executeQuery()) {
-      while (rs.next()) {
-        messagesModel.addRow(new Object[] {
-            rs.getString("room_name"), rs.getString("sender_name"),
-            rs.getString("message_content"), rs.getString("sent_at")
-        });
+    try (Connection conn = DatabaseManager.getConnection()) {
+      if (conn == null) return;
+      try (PreparedStatement pstmt = conn.prepareStatement(sql);
+          ResultSet rs = pstmt.executeQuery()) {
+        while (rs.next()) {
+          messagesModel.addRow(new Object[] {
+              rs.getString("room_name"), rs.getString("sender_name"),
+              rs.getString("message_content"), rs.getString("sent_at")
+          });
+        }
       }
     } catch (Exception e) {
       e.printStackTrace();

@@ -1,49 +1,94 @@
 package com.orgchat;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLServerSocketFactory;
 import javax.net.ssl.SSLSocket;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.security.KeyStore;
+import java.security.SecureRandom;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class ChatServer {
-  // Standard port for secure (SSL/HTTPS) traffic is usually in the 8443 or 443
-  // range
-  private static final int PORT = 8443;
-
-  // A Thread Pool that can handle up to 50 concurrent employees chatting at once
-  private static final ExecutorService pool = Executors.newFixedThreadPool(50);
+  public static final int DEFAULT_PORT = 8443;
+  private static final ExecutorService pool = Executors.newCachedThreadPool();
 
   public static void main(String[] args) {
-    // 1. Tell the Java Virtual Machine where to find our SSL certificate
-    System.setProperty("javax.net.ssl.keyStore", "keystore.p12");
-    System.setProperty("javax.net.ssl.keyStorePassword", "password123");
+    int port = DEFAULT_PORT;
+    if (args.length > 0) {
+      try {
+        port = Integer.parseInt(args[0]);
+      } catch (NumberFormatException e) {
+        System.err.println("Invalid port provided, using default " + DEFAULT_PORT);
+      }
+    }
 
-    System.out.println("Secure Chat Server is booting up...");
+    System.out.println("Secure Org Chat Server (TLS Encrypted) is booting up...");
 
+    // Initialize the relational database schema before accepting connections
+    DatabaseManager.initializeDB();
+
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      System.out.println("Shutting down thread pool...");
+      pool.shutdown();
+    }));
+
+    SSLServerSocket serverSocket = null;
     try {
-      // 2. Create the SSL Server Socket
-      SSLServerSocketFactory sslServerSocketFactory = (SSLServerSocketFactory) SSLServerSocketFactory.getDefault();
-      SSLServerSocket serverSocket = (SSLServerSocket) sslServerSocketFactory.createServerSocket(PORT);
+      serverSocket = createSSLServerSocket(port);
+      System.out.println("Server is actively listening for encrypted connections on port " + port);
 
-      System.out.println("Server is actively listening for encrypted connections on port " + PORT);
-
-      // 3. The Infinite Loop
-      while (true) {
-        // .accept() pauses the loop here until a client actually connects
+      while (!serverSocket.isClosed()) {
         SSLSocket clientSocket = (SSLSocket) serverSocket.accept();
-        System.out.println("New secure connection established with a client!");
+        System.out.println("New secure TLS connection established with client: " + clientSocket.getRemoteSocketAddress());
 
-        // 4. Hand the client off to a background worker thread
         ClientHandler clientThread = new ClientHandler(clientSocket);
         pool.execute(clientThread);
       }
-
-    } catch (IOException e) {
-      System.err.println("Server encountered an error: " + e.getMessage());
-      e.printStackTrace();
+    } catch (Exception e) {
+      if (serverSocket != null && !serverSocket.isClosed()) {
+        System.err.println("Server encountered an error: " + e.getMessage());
+        e.printStackTrace();
+      } else if (serverSocket == null) {
+        System.err.println("Could not bind SSL server to port " + port + ": " + e.getMessage());
+        e.printStackTrace();
+      }
+    } finally {
+      pool.shutdown();
+      try {
+        if (serverSocket != null && !serverSocket.isClosed()) {
+          serverSocket.close();
+        }
+      } catch (IOException ignored) {}
     }
+  }
+
+  private static SSLServerSocket createSSLServerSocket(int port) throws Exception {
+    KeyStore keyStore = KeyStore.getInstance("PKCS12");
+    InputStream stream = ChatServer.class.getResourceAsStream("/keystore.p12");
+    if (stream == null && new File("keystore.p12").exists()) {
+      stream = new FileInputStream("keystore.p12");
+    }
+    if (stream == null) {
+      throw new IOException("keystore.p12 not found on classpath or in working directory!");
+    }
+    try (InputStream is = stream) {
+      keyStore.load(is, "password123".toCharArray());
+    }
+
+    KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+    kmf.init(keyStore, "password123".toCharArray());
+
+    SSLContext sslContext = SSLContext.getInstance("TLS");
+    sslContext.init(kmf.getKeyManagers(), null, new SecureRandom());
+
+    SSLServerSocketFactory sslServerSocketFactory = sslContext.getServerSocketFactory();
+    return (SSLServerSocket) sslServerSocketFactory.createServerSocket(port);
   }
 }
 
